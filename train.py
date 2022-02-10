@@ -23,6 +23,8 @@ from collections import OrderedDict
 from contextlib import suppress
 from datetime import datetime
 
+from sklearn.metrics import f1_score, precision_recall_fscore_support
+
 import torch
 import torch.nn as nn
 import torchvision.utils
@@ -642,9 +644,11 @@ def main():
                 # step LR for next epoch
                 lr_scheduler.step(epoch + 1, eval_metrics[eval_metric])
 
+            lr=lr_scheduler.optimizer.param_groups[0]['lr']
+            #change here
             if output_dir is not None:
                 update_summary(
-                    epoch, train_metrics, eval_metrics, os.path.join(output_dir, 'summary.csv'),
+                    epoch, train_metrics, eval_metrics, lr ,os.path.join(output_dir, 'summary.csv'),
                     write_header=best_metric is None, log_wandb=args.log_wandb and has_wandb)
 
             if saver is not None:
@@ -765,12 +769,30 @@ def train_one_epoch(
 
     return OrderedDict([('loss', losses_m.avg)])
 
+def f1score_prec_rec(y_true, y_pred):
+    '''
+    y_true: takes ground truth, 1d array
+    y_pred: raw output of the model without softmax
+
+    returns:
+    prec
+    recall
+    f1
+    support
+    '''
+
+    pred = torch.argmax(y_pred, dim=1)
+    return precision_recall_fscore_support(y_true, pred, average='weighted')
+
 
 def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix=''):
     batch_time_m = AverageMeter()
     losses_m = AverageMeter()
     top1_m = AverageMeter()
     top5_m = AverageMeter()
+    f1_m = AverageMeter()
+    precision_m = AverageMeter()
+    recall_m = AverageMeter()
 
     model.eval()
 
@@ -798,11 +820,15 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
 
             loss = loss_fn(output, target)
             acc1, acc5 = accuracy(output, target, topk=(1, 5))
+            precision, recall, f1 = f1score_prec_rec(target, output)
 
             if args.distributed:
                 reduced_loss = reduce_tensor(loss.data, args.world_size)
                 acc1 = reduce_tensor(acc1, args.world_size)
                 acc5 = reduce_tensor(acc5, args.world_size)
+                precision = reduce_tensor(precision, args.world_size)
+                recall = reduce_tensor(recall, args.world_size)
+                f1 = reduce_tensor(f1, args.world_size)
             else:
                 reduced_loss = loss.data
 
@@ -811,6 +837,9 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
             losses_m.update(reduced_loss.item(), input.size(0))
             top1_m.update(acc1.item(), output.size(0))
             top5_m.update(acc5.item(), output.size(0))
+            precision_m.update(precision.item(), output.size(0))
+            recall_m.update(recall.item(), output.size(0))
+            f1_m.update(f1.item(), output.size(0))
 
             batch_time_m.update(time.time() - end)
             end = time.time()
@@ -825,7 +854,9 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
                         log_name, batch_idx, last_idx, batch_time=batch_time_m,
                         loss=losses_m, top1=top1_m, top5=top5_m))
 
-    metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg)])
+    metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg),
+            ('precision', precision_m.avg),('recall', recall_m.avg),('f1', f1_m.avg)
+    ])
 
     return metrics
 
