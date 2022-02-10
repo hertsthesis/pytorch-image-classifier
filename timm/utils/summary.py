@@ -26,11 +26,12 @@ def get_outdir(path, *paths, inc=False):
     return outdir
 
 
-def update_summary(epoch, train_metrics, eval_metrics, lr, filename, write_header=False, log_wandb=False):
+def update_summary(epoch, train_metrics, eval_metrics, lr, conf_mat, filename, write_header=False, log_wandb=False):
     rowd = OrderedDict(epoch=epoch)
     rowd.update([('train_' + k, v) for k, v in train_metrics.items()])
     rowd.update([('eval_' + k, v) for k, v in eval_metrics.items()])
     rowd.update([('lr', lr )])
+    rowd.update([("examples", conf_mat)])
     if log_wandb:
         wandb.log(rowd)
     with open(filename, mode='a') as cf:

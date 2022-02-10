@@ -15,6 +15,7 @@ NVIDIA CUDA specific speedups adopted from NVIDIA Apex examples
 Hacked together by / Copyright 2020 Ross Wightman (https://github.com/rwightman)
 """
 import argparse
+from operator import concat
 import time
 import yaml
 import os
@@ -24,6 +25,11 @@ from contextlib import suppress
 from datetime import datetime
 
 from sklearn.metrics import f1_score, precision_recall_fscore_support, roc_auc_score
+import numpy as np
+import matplotlib.pyplot as plt
+import PIL.Image as Image
+import pandas as pd
+import seaborn as sns
 
 import torch
 import torch.nn as nn
@@ -631,7 +637,7 @@ def main():
                     _logger.info("Distributing BatchNorm running means and vars")
                 distribute_bn(model, args.world_size, args.dist_bn == 'reduce')
 
-            eval_metrics = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
+            eval_metrics, conf_mat = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
 
             if model_ema is not None and not args.model_ema_force_cpu:
                 if args.distributed and args.dist_bn in ('broadcast', 'reduce'):
@@ -648,7 +654,7 @@ def main():
             #change here
             if output_dir is not None:
                 update_summary(
-                    epoch, train_metrics, eval_metrics, lr ,os.path.join(output_dir, 'summary.csv'),
+                    epoch, train_metrics, eval_metrics, lr, conf_mat ,os.path.join(output_dir, 'summary.csv'),
                     write_header=best_metric is None, log_wandb=args.log_wandb and has_wandb)
 
             if saver is not None:
@@ -795,6 +801,35 @@ def get_roc_auc(y_true, y_pred, n_classes):
 
     return roc_auc_score(y_true_hot, y_pred, multi_class='ovr')
 
+def fig2img(fig):
+    """Convert a Matplotlib figure to a PIL Image and return it"""
+    import io
+    buf = io.BytesIO()
+    fig.savefig(buf)
+    buf.seek(0)
+    img = Image.open(buf)
+    return img
+
+def get_confusion_matrix(y_true, y_pred, nb_classes):
+    confusion_matrix = np.zeros((nb_classes, nb_classes))
+
+    for true_class, pred_class in zip(y_true, y_pred):
+        confusion_matrix[true_class, pred_class] += 1
+
+    plt.figure(figsize=(15,10))
+
+    df_cm = pd.DataFrame(confusion_matrix).astype(int)
+    heatmap = sns.heatmap(df_cm, annot=True, fmt="d")
+
+    heatmap.yaxis.set_ticklabels(heatmap.yaxis.get_ticklabels(), rotation=0, ha='right',fontsize=15)
+    heatmap.xaxis.set_ticklabels(heatmap.xaxis.get_ticklabels(), rotation=45, ha='right',fontsize=15)
+    plt.ylabel('True label')
+    plt.xlabel('Predicted label')
+
+    img = fig2img(plt)
+    plt.close()
+
+    return img
 
 def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix=''):
     batch_time_m = AverageMeter()
@@ -805,6 +840,9 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
     precision_m = AverageMeter()
     recall_m = AverageMeter()
     roc_auc_m = AverageMeter()
+
+    y_pred = None
+    y_true = None
 
     model.eval()
 
@@ -829,6 +867,13 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
             if reduce_factor > 1:
                 output = output.unfold(0, reduce_factor, reduce_factor).mean(dim=2)
                 target = target[0:target.size(0):reduce_factor]
+
+            if isinstance(y_pred, type(None)):
+                y_pred = output 
+                y_true = target 
+            else:
+                y_pred = torch.cat((y_pred, output), 0)
+                y_true = torch.cat((y_true, target), 0)
 
             loss = loss_fn(output, target)
             acc1, acc5 = accuracy(output, target, topk=(1, 5))
@@ -873,7 +918,9 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
             ('precision', precision_m.avg),('recall', recall_m.avg),('f1', f1_m.avg), ('roc_auc', roc_auc_m.avg)
     ])
 
-    return metrics
+    conf_mat = get_confusion_matrix(y_true, y_pred, args.num_classes)
+
+    return metrics, conf_mat
 
 
 if __name__ == '__main__':
