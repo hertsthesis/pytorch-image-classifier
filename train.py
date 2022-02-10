@@ -23,7 +23,7 @@ from collections import OrderedDict
 from contextlib import suppress
 from datetime import datetime
 
-from sklearn.metrics import f1_score, precision_recall_fscore_support
+from sklearn.metrics import f1_score, precision_recall_fscore_support, roc_auc_score
 
 import torch
 import torch.nn as nn
@@ -784,6 +784,17 @@ def f1score_prec_rec(y_true, y_pred):
     pred = torch.argmax(y_pred, dim=1)
     return precision_recall_fscore_support(y_true, pred, average='weighted')
 
+def get_roc_auc(y_true, y_pred, n_classes):
+    '''
+    y_true: takes ground truth, 1d array
+    y_pred: raw output of the model without softmax
+    '''
+
+    y_true_hot=torch.nn.functional.one_hot(y_true, n_classes)
+    y_pred=torch.nn.functional.softmax(y_pred, dim=1)
+
+    return roc_auc_score(y_true_hot, y_pred, multi_class='ovr')
+
 
 def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix=''):
     batch_time_m = AverageMeter()
@@ -793,6 +804,7 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
     f1_m = AverageMeter()
     precision_m = AverageMeter()
     recall_m = AverageMeter()
+    roc_auc_m = AverageMeter()
 
     model.eval()
 
@@ -821,6 +833,7 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
             loss = loss_fn(output, target)
             acc1, acc5 = accuracy(output, target, topk=(1, 5))
             precision, recall, f1 = f1score_prec_rec(target, output)
+            roc_auc = get_roc_auc(target, output, args.num_classes)
 
             if args.distributed:
                 reduced_loss = reduce_tensor(loss.data, args.world_size)
@@ -829,6 +842,7 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
                 precision = reduce_tensor(precision, args.world_size)
                 recall = reduce_tensor(recall, args.world_size)
                 f1 = reduce_tensor(f1, args.world_size)
+                roc_auc = reduce_tensor(roc_auc, args.world_size)
             else:
                 reduced_loss = loss.data
 
@@ -840,6 +854,7 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
             precision_m.update(precision.item(), output.size(0))
             recall_m.update(recall.item(), output.size(0))
             f1_m.update(f1.item(), output.size(0))
+            roc_auc_m.update(roc_auc.item(), output.size(0))
 
             batch_time_m.update(time.time() - end)
             end = time.time()
@@ -855,7 +870,7 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
                         loss=losses_m, top1=top1_m, top5=top5_m))
 
     metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg),
-            ('precision', precision_m.avg),('recall', recall_m.avg),('f1', f1_m.avg)
+            ('precision', precision_m.avg),('recall', recall_m.avg),('f1', f1_m.avg), ('roc_auc', roc_auc_m.avg)
     ])
 
     return metrics
