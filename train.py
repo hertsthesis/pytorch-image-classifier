@@ -784,11 +784,10 @@ def f1score_prec_rec(y_true, y_pred):
     prec
     recall
     f1
-    support
     '''
 
     pred = torch.argmax(y_pred, dim=1)
-    return precision_recall_fscore_support(y_true.cpu().detach().numpy(), pred.cpu().detach().numpy(), average='weighted')
+    return precision_recall_fscore_support(y_true.cpu().detach().numpy(), pred.cpu().detach().numpy(), average='weighted')[:3]
 
 def get_roc_auc(y_true, y_pred, n_classes):
     '''
