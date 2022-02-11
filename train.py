@@ -788,7 +788,7 @@ def f1score_prec_rec(y_true, y_pred):
     '''
 
     pred = torch.argmax(y_pred, dim=1)
-    return precision_recall_fscore_support(y_true, pred, average='weighted')
+    return precision_recall_fscore_support(y_true.cpu().detach().numpy(), pred.cpu().detach().numpy(), average='weighted')
 
 def get_roc_auc(y_true, y_pred, n_classes):
     '''
@@ -796,10 +796,10 @@ def get_roc_auc(y_true, y_pred, n_classes):
     y_pred: raw output of the model without softmax
     '''
 
-    y_true_hot=torch.nn.functional.one_hot(y_true, n_classes)
-    y_pred=torch.nn.functional.softmax(y_pred, dim=1)
+    y_true_hot=torch.nn.functional.one_hot(y_true.cpu().detach(), n_classes)
+    y_pred=torch.nn.functional.softmax(y_pred.cpu().detach(), dim=1)
 
-    return roc_auc_score(y_true_hot, y_pred, multi_class='ovr')
+    return roc_auc_score(y_true_hot.numpy(), y_pred.numpy(), multi_class='ovr')
 
 def fig2img(fig):
     """Convert a Matplotlib figure to a PIL Image and return it"""
