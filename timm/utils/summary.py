@@ -31,7 +31,7 @@ def update_summary(epoch, train_metrics, eval_metrics, lr, conf_mat, filename, w
     rowd.update([('train_' + k, v) for k, v in train_metrics.items()])
     rowd.update([('eval_' + k, v) for k, v in eval_metrics.items()])
     rowd.update([('lr', lr )])
-    rowd.update([("examples", conf_mat)])
+    rowd.update([("examples", wandb.Image(conf_mat))])
     if log_wandb:
         wandb.log(rowd)
     with open(filename, mode='a') as cf:

@@ -79,7 +79,9 @@ parser.add_argument('-c', '--config', default='', type=str, metavar='FILE',
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 
 # Dataset parameters
-parser.add_argument('data_dir', metavar='DIR',
+parser.add_argument('data_dir_train', metavar='DIR',
+                    help='path to dataset')
+parser.add_argument('data_dir_val', metavar='DIR',
                     help='path to dataset')
 parser.add_argument('--dataset', '-d', metavar='NAME', default='',
                     help='dataset type (default: ImageFolder/ImageTar if empty)')
@@ -500,16 +502,19 @@ def main():
 
     # create the train and eval datasets
     dataset_train = create_dataset(
-        args.dataset, root=args.data_dir, split=args.train_split, is_training=True,
+        args.dataset, root=args.data_dir_train, search_split=False, split=args.train_split, is_training=True,
         class_map=args.class_map,
         download=args.dataset_download,
         batch_size=args.batch_size,
         repeats=args.epoch_repeats)
     dataset_eval = create_dataset(
-        args.dataset, root=args.data_dir, split=args.val_split, is_training=False,
+        args.dataset, root=args.data_dir_val, search_split=False, split=args.val_split, is_training=False,
         class_map=args.class_map,
         download=args.dataset_download,
         batch_size=args.batch_size)
+
+    print(f'train data lenght {len(dataset_train)}')
+    print(f'eval data lenght {len(dataset_eval)}')
 
     # setup mixup / cutmix
     collate_fn = None
@@ -812,7 +817,10 @@ def fig2img(fig):
 def get_confusion_matrix(y_true, y_pred, nb_classes):
     confusion_matrix = np.zeros((nb_classes, nb_classes))
 
-    for true_class, pred_class in zip(y_true, y_pred):
+    print('y_pred shape',torch.argmax(y_pred, dim=1).shape)
+    print('y_true shape',y_true.shape)
+
+    for true_class, pred_class in zip(y_true.cpu().detach().numpy().astype('int32'), torch.argmax(y_pred,dim=1).cpu().detach().numpy().astype('int32')):
         confusion_matrix[true_class, pred_class] += 1
 
     plt.figure(figsize=(15,10))
@@ -876,17 +884,17 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
 
             loss = loss_fn(output, target)
             acc1, acc5 = accuracy(output, target, topk=(1, 5))
-            precision, recall, f1 = f1score_prec_rec(target, output)
-            roc_auc = get_roc_auc(target, output, args.num_classes)
+            # precision, recall, f1 = f1score_prec_rec(target, output)
+            # roc_auc = get_roc_auc(target, output, args.num_classes)
 
             if args.distributed:
                 reduced_loss = reduce_tensor(loss.data, args.world_size)
                 acc1 = reduce_tensor(acc1, args.world_size)
                 acc5 = reduce_tensor(acc5, args.world_size)
-                precision = reduce_tensor(precision, args.world_size)
-                recall = reduce_tensor(recall, args.world_size)
-                f1 = reduce_tensor(f1, args.world_size)
-                roc_auc = reduce_tensor(roc_auc, args.world_size)
+                # precision = reduce_tensor(precision, args.world_size)
+                # recall = reduce_tensor(recall, args.world_size)
+                # f1 = reduce_tensor(f1, args.world_size)
+                # roc_auc = reduce_tensor(roc_auc, args.world_size)
             else:
                 reduced_loss = loss.data
 
@@ -895,10 +903,10 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
             losses_m.update(reduced_loss.item(), input.size(0))
             top1_m.update(acc1.item(), output.size(0))
             top5_m.update(acc5.item(), output.size(0))
-            precision_m.update(precision.item(), output.size(0))
-            recall_m.update(recall.item(), output.size(0))
-            f1_m.update(f1.item(), output.size(0))
-            roc_auc_m.update(roc_auc.item(), output.size(0))
+            # precision_m.update(precision.item(), output.size(0))
+            # recall_m.update(recall.item(), output.size(0))
+            # f1_m.update(f1.item(), output.size(0))
+            # roc_auc_m.update(roc_auc.item(), output.size(0))
 
             batch_time_m.update(time.time() - end)
             end = time.time()
@@ -913,8 +921,11 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
                         log_name, batch_idx, last_idx, batch_time=batch_time_m,
                         loss=losses_m, top1=top1_m, top5=top5_m))
 
+    print('classes in y_true ',torch.unique(y_true))
+    roc_auc = get_roc_auc(y_true, y_pred, args.num_classes)
+    precision, recall, f1 = f1score_prec_rec(y_true, y_pred)
     metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg),
-            ('precision', precision_m.avg),('recall', recall_m.avg),('f1', f1_m.avg), ('roc_auc', roc_auc_m.avg)
+            ('precision', precision),('recall', recall),('f1', f1), ('roc_auc', roc_auc)
     ])
 
     conf_mat = get_confusion_matrix(y_true, y_pred, args.num_classes)

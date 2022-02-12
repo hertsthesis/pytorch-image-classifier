@@ -139,5 +139,7 @@ def create_dataset(
         if search_split and os.path.isdir(root):
             # look for split specific sub-folder in root
             root = _search_split(root, split)
+
+        print('dataset path', root)
         ds = ImageDataset(root, parser=name, class_map=class_map, load_bytes=load_bytes, **kwargs)
     return ds
