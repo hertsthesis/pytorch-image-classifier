@@ -5,8 +5,18 @@ Hacked together by / Copyright 2020 Ross Wightman
 import torch
 from torch import distributed as dist
 
+import os
+
 from .model import unwrap_model
 
+def gather_tensor(tensor, n):
+    '''
+    returns list of gathered tensor if rank 0
+    '''
+    output = [tensor.clone() for i in range(n)]
+    dist.all_gather(output, tensor)
+
+    return torch.cat(output,dim=0)
 
 def reduce_tensor(tensor, n):
     rt = tensor.clone()

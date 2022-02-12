@@ -2,7 +2,7 @@ from .agc import adaptive_clip_grad
 from .checkpoint_saver import CheckpointSaver
 from .clip_grad import dispatch_clip_grad
 from .cuda import ApexScaler, NativeScaler
-from .distributed import distribute_bn, reduce_tensor
+from .distributed import distribute_bn, reduce_tensor, gather_tensor
 from .jit import set_jit_legacy, set_jit_fuser
 from .log import setup_default_logging, FormatterNoInfo
 from .metrics import AverageMeter, accuracy

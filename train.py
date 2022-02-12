@@ -14,6 +14,11 @@ NVIDIA CUDA specific speedups adopted from NVIDIA Apex examples
 
 Hacked together by / Copyright 2020 Ross Wightman (https://github.com/rwightman)
 """
+
+#use local timm folder instead of library
+import sys
+sys.path.insert(0, '.')
+
 import argparse
 from operator import concat
 import time
@@ -332,12 +337,13 @@ def main():
     setup_default_logging()
     args, args_text = _parse_args()
     
-    if args.log_wandb:
-        if has_wandb:
-            wandb.init(project=args.experiment, config=args)
-        else: 
-            _logger.warning("You've requested to log metrics to wandb but package not found. "
-                            "Metrics not being logged to wandb, try `pip install wandb`")
+    if int(os.environ['LOCAL_RANK']) == 0:
+        if args.log_wandb:
+            if has_wandb:
+                wandb.init(project=args.experiment, config=args)
+            else: 
+                _logger.warning("You've requested to log metrics to wandb but package not found. "
+                                "Metrics not being logged to wandb, try `pip install wandb`")
              
     args.prefetcher = not args.no_prefetcher
     args.distributed = False
@@ -658,9 +664,10 @@ def main():
             lr=lr_scheduler.optimizer.param_groups[0]['lr']
             #change here
             if output_dir is not None:
-                update_summary(
-                    epoch, train_metrics, eval_metrics, lr, conf_mat ,os.path.join(output_dir, 'summary.csv'),
-                    write_header=best_metric is None, log_wandb=args.log_wandb and has_wandb)
+                if int(os.environ['LOCAL_RANK']) == 0:
+                    update_summary(
+                        epoch, train_metrics, eval_metrics, lr, conf_mat ,os.path.join(output_dir, 'summary.csv'),
+                        write_header=best_metric is None, log_wandb=args.log_wandb and has_wandb)
 
             if saver is not None:
                 # save proper checkpoint with eval metric
@@ -843,10 +850,6 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
     losses_m = AverageMeter()
     top1_m = AverageMeter()
     top5_m = AverageMeter()
-    f1_m = AverageMeter()
-    precision_m = AverageMeter()
-    recall_m = AverageMeter()
-    roc_auc_m = AverageMeter()
 
     y_pred = None
     y_true = None
@@ -875,38 +878,42 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
                 output = output.unfold(0, reduce_factor, reduce_factor).mean(dim=2)
                 target = target[0:target.size(0):reduce_factor]
 
-            if isinstance(y_pred, type(None)):
-                y_pred = output 
-                y_true = target 
-            else:
-                y_pred = torch.cat((y_pred, output), 0)
-                y_true = torch.cat((y_true, target), 0)
-
             loss = loss_fn(output, target)
             acc1, acc5 = accuracy(output, target, topk=(1, 5))
             # precision, recall, f1 = f1score_prec_rec(target, output)
             # roc_auc = get_roc_auc(target, output, args.num_classes)
 
+            gathered_output=None
+            gathered_target=None
+
             if args.distributed:
                 reduced_loss = reduce_tensor(loss.data, args.world_size)
                 acc1 = reduce_tensor(acc1, args.world_size)
                 acc5 = reduce_tensor(acc5, args.world_size)
+                gathered_output = gather_tensor(output, args.world_size)
+                gathered_target = gather_tensor(target, args.world_size)
+
                 # precision = reduce_tensor(precision, args.world_size)
                 # recall = reduce_tensor(recall, args.world_size)
                 # f1 = reduce_tensor(f1, args.world_size)
                 # roc_auc = reduce_tensor(roc_auc, args.world_size)
             else:
                 reduced_loss = loss.data
+                gathered_target=target
+                gathered_output=output
+
+            if isinstance(y_pred, type(None)):
+                y_pred = gathered_output 
+                y_true = gathered_target 
+            else:
+                y_pred = torch.cat((y_pred, gathered_output), 0)
+                y_true = torch.cat((y_true, gathered_target), 0)
 
             torch.cuda.synchronize()
 
             losses_m.update(reduced_loss.item(), input.size(0))
             top1_m.update(acc1.item(), output.size(0))
             top5_m.update(acc5.item(), output.size(0))
-            # precision_m.update(precision.item(), output.size(0))
-            # recall_m.update(recall.item(), output.size(0))
-            # f1_m.update(f1.item(), output.size(0))
-            # roc_auc_m.update(roc_auc.item(), output.size(0))
 
             batch_time_m.update(time.time() - end)
             end = time.time()
@@ -922,12 +929,12 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
                         loss=losses_m, top1=top1_m, top5=top5_m))
 
     print('classes in y_true ',torch.unique(y_true))
+
     roc_auc = get_roc_auc(y_true, y_pred, args.num_classes)
     precision, recall, f1 = f1score_prec_rec(y_true, y_pred)
     metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg),
             ('precision', precision),('recall', recall),('f1', f1), ('roc_auc', roc_auc)
     ])
-
     conf_mat = get_confusion_matrix(y_true, y_pred, args.num_classes)
 
     return metrics, conf_mat
