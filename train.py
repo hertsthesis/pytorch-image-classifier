@@ -20,6 +20,7 @@ import sys
 sys.path.insert(0, '.')
 
 from torchsampler import ImbalancedDatasetSampler
+import sklearn
 
 import argparse
 from operator import concat
@@ -547,6 +548,8 @@ def main():
     train_interpolation = args.train_interpolation
     if args.no_aug or not train_interpolation:
         train_interpolation = data_config['interpolation']
+
+    weights = sklearn.utils.class_weight.compute_class_weight(’balanced’, [0,1], dataset_train.targets)
     loader_train = create_loader(
         dataset_train,
         input_size=data_config['input_size'],
@@ -575,7 +578,7 @@ def main():
         pin_memory=args.pin_mem,
         use_multi_epochs_loader=args.use_multi_epochs_loader,
         worker_seeding=args.worker_seeding,
-        sampler=ImbalancedDatasetSampler(dataset_train)
+        sampler=torch.utils.data.sampler.WeightedRandomSampler(weights, len(weights))
     )
 
     loader_eval = create_loader(
