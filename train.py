@@ -19,6 +19,8 @@ Hacked together by / Copyright 2020 Ross Wightman (https://github.com/rwightman)
 import sys
 sys.path.insert(0, '.')
 
+from torchsampler import ImbalancedDatasetSampler
+
 import argparse
 from operator import concat
 import time
@@ -573,6 +575,7 @@ def main():
         pin_memory=args.pin_mem,
         use_multi_epochs_loader=args.use_multi_epochs_loader,
         worker_seeding=args.worker_seeding,
+        sampler=ImbalancedDatasetSampler(dataset_train)
     )
 
     loader_eval = create_loader(
