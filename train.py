@@ -549,7 +549,7 @@ def main():
     if args.no_aug or not train_interpolation:
         train_interpolation = data_config['interpolation']
 
-    weights = sklearn.utils.class_weight.compute_class_weight(’balanced’, [0,1], dataset_train.targets)
+    weights = sklearn.utils.class_weight.compute_class_weight('balanced', [0,1], dataset_train.targets)
     loader_train = create_loader(
         dataset_train,
         input_size=data_config['input_size'],
